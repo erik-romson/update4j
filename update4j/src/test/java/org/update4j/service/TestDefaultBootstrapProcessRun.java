@@ -8,10 +8,6 @@ import org.junit.Test;
 import org.update4j.Configuration;
 import org.update4j.FileMetadata;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -21,10 +17,8 @@ import java.util.stream.Stream;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
 import static org.junit.Assert.*;
-import static org.update4j.service.TestUtil.deleteAll;
-import static org.update4j.service.TestUtil.getModuleBaseDir;
 
-public class TestDefaultBootstrapRun {
+public class TestDefaultBootstrapProcessRun {
 
     public static final String TEST_APPLICATION_MODULE_NAME = "test-classes-to-launch";
     public static final String TEST_APPLICATION_JAR_NAME_1 = "test-classes-to-launch-1.jar";
@@ -36,14 +30,15 @@ public class TestDefaultBootstrapRun {
     @Rule
     public WireMockRule wireMockRule = new WireMockRule(options().port(8888));
     private Path jarToDownloadPath;
+    private String update4jBasePath;
 
     @Before
     public void before()  {
-        Path moduleBaseDir = getModuleBaseDir(getClass());
-        String update4jBasePath = moduleBaseDir.toAbsolutePath()
+        Path moduleBaseDir = TestUtil.getModuleBaseDir(getClass());
+        update4jBasePath = moduleBaseDir.toAbsolutePath()
                                                .toString() + "/target/blaj";
         //clean local basepath to trigger update
-        deleteAll(update4jBasePath);
+        TestUtil.deleteAll(update4jBasePath);
 
         //path to jar in test-classes-to-launch
         jarToDownloadPath = Paths.get(moduleBaseDir.toAbsolutePath()
@@ -76,14 +71,19 @@ public class TestDefaultBootstrapRun {
 
 
     @Test
-    public void testBootstrap() throws Throwable {
+    public void testProcessOk() throws Throwable {
         stubFor(get(urlEqualTo("/jars/" + TEST_APPLICATION_JAR_NAME_1))
                         .willReturn(aResponse()
                                             .withBody(Files.readAllBytes(jarToDownloadPath))));
 
+        String javaHome=System.getProperty("java.home");
+
         String testClass = "a.b.c.TestMain";
         Configuration configuration = configurationBuilder
-                .property(DefaultLauncher.MAIN_CLASS_PROPERTY_KEY, testClass)
+                .property("default.launcher.argument.1",javaHome+ "/bin/java")
+                .property("default.launcher.argument.2", "-cp")
+                .property("default.launcher.argument.3", update4jBasePath+"/jars/" + TEST_APPLICATION_JAR_NAME_1)
+                .property("default.launcher.argument.4", testClass)
                 .build();
 
         //stub config
@@ -95,20 +95,25 @@ public class TestDefaultBootstrapRun {
               .setProperty(testClass, "false");
         (new DefaultBootstrap()).main(Lists.newArrayList("--remote",
                                                          BASE_URI + "/update4j.xml"));
-        assertEquals("true", System.getProperty(testClass));
         assertEquals(0, uncaughtExceptions.size());
     }
 
     @Test
-    public void testFailedBootstrap() throws Throwable {
+    public void testProcessFailed() throws Throwable {
         stubFor(get(urlEqualTo("/jars/" + TEST_APPLICATION_JAR_NAME_1))
                         .willReturn(aResponse()
                                             .withBody(Files.readAllBytes(jarToDownloadPath))));
 
-        String testClass = "a.b.c.FailingTestMain";
+        String javaHome=System.getProperty("java.home");
+
+        String testClass = "a.b.c.TestMain";
         Configuration configuration = configurationBuilder
-                .property(DefaultLauncher.MAIN_CLASS_PROPERTY_KEY, testClass)
+                .property("default.launcher.argument.1",javaHome+ "/bin/java")
+                .property("default.launcher.argument.2", "-cp "+update4jBasePath+"/jars/" + TEST_APPLICATION_JAR_NAME_1)
+                .property("default.launcher.argument.3", testClass)
                 .build();
+
+        //stub config
         stubFor(get(urlEqualTo("/update4j.xml"))
                         .willReturn(aResponse()
                                             .withBody(configuration.toString())));
@@ -117,48 +122,34 @@ public class TestDefaultBootstrapRun {
               .setProperty(testClass, "false");
         (new DefaultBootstrap()).main(Lists.newArrayList("--remote",
                                                          BASE_URI + "/update4j.xml"));
-        assertEquals("true", System.getProperty(testClass));
         assertEquals(1, uncaughtExceptions.size());
     }
 
+
     @Test
-    public void testUpdateSlowConnection() throws Throwable {
+    public void testFailedBootstrap() throws Throwable {
         stubFor(get(urlEqualTo("/jars/" + TEST_APPLICATION_JAR_NAME_1))
                         .willReturn(aResponse()
-                                            .withFixedDelay(1000)
                                             .withBody(Files.readAllBytes(jarToDownloadPath))));
-
 
         String testClass = "a.b.c.TestMain";
         Configuration configuration = configurationBuilder
-                .property(DefaultLauncher.MAIN_CLASS_PROPERTY_KEY, testClass)
+                .property("default.launcher.argument.1","ugga")
+                .property("default.launcher.argument.2", "-cp")
+                .property("default.launcher.argument.3", update4jBasePath+"/jars/" + TEST_APPLICATION_JAR_NAME_1)
+                .property("default.launcher.argument.4", testClass)
                 .build();
+
+        //stub config
         stubFor(get(urlEqualTo("/update4j.xml"))
                         .willReturn(aResponse()
-                                            .withBody(configuration.toString())
-                        ));
+                                            .withBody(configuration.toString())));
 
         System.getProperties()
               .setProperty(testClass, "false");
-        DefaultUpdateHandler handler = new DefaultUpdateHandler() {
-            @Override
-            public InputStream openDownloadStream(FileMetadata file) throws Throwable {
-                URLConnection connection = file.getUri()
-                                               .toURL()
-                                               .openConnection();
-                connection.addRequestProperty("User-Agent", "Mozilla/5.0");
-                connection.setConnectTimeout(100);
-                connection.setReadTimeout(100);
-                return connection.getInputStream();
-            }
-        };
-
-        assertTrue(configuration.requiresUpdate());
-
-        boolean update = configuration.update(handler);
-        assertFalse(update);
-        assertEquals("false", System.getProperty(testClass));
-        assertEquals(0, uncaughtExceptions.size());
+        (new DefaultBootstrap()).main(Lists.newArrayList("--remote",
+                                                         BASE_URI + "/update4j.xml"));
+        assertEquals(1, uncaughtExceptions.size());
     }
 
 
