@@ -127,6 +127,12 @@ public class DefaultLauncher implements Launcher {
 
             try {
                 Process process = (new ProcessBuilder(localArgs).inheritIO()).start();
+                try {
+                    //just wait for immediate problems
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    //
+                }
                 if (!process.isAlive()&&process.exitValue()!=0){
                     throw new RuntimeException("process exited with exit value != 0, exit value="+process.exitValue());
                 }
